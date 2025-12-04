@@ -81,8 +81,8 @@ function extractJiraKeys(text) {
   for (const pattern of JIRA_KEY_PATTERNS) {
     const matches = text.matchAll(pattern);
     for (const match of matches) {
-      // The Jira key is in the first or second capture group
-      const key = match[1] || match[0];
+      // The Jira key is always in the first capture group (match[1])
+      const key = match[1];
       if (key && /^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
         keys.add(key);
       }

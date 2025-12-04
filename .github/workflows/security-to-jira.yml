@@ -1,12 +1,10 @@
 name: GitHub Security to Jira Integration
 
-# Triggers when code scanning alerts are generated on pull requests
+# Triggers on pull request events to check for security alerts
+# Note: This workflow only processes alerts in the context of PRs
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  # Triggered when code scanning completes
-  code_scanning_alert:
-    types: [created, reopened]
 
 permissions:
   # Minimum required permissions following least-privilege principle
@@ -53,7 +51,7 @@ jobs:
           # Jira configuration
           JIRA_DEFAULT_PROJECT: ${{ secrets.JIRA_DEFAULT_PROJECT }}
           JIRA_DEFAULT_ISSUE_TYPE: >-
-            ${{ secrets.JIRA_DEFAULT_ISSUE_TYPE || 'Task' }}
+            ${{ vars.JIRA_DEFAULT_ISSUE_TYPE || 'Task' }}
           JIRA_FALLBACK_LABEL: >-
             ${{ vars.JIRA_FALLBACK_LABEL || 'missing-user-story' }}
           JIRA_SECURITY_LABEL: >-
