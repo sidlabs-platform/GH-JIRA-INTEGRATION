@@ -1,0 +1,19 @@
+# Code Owners for Security Review
+# These owners will be requested for review when someone opens a pull request.
+
+# Default owner for everything in the repo
+* @siddjoshi
+
+# Security-sensitive files require additional review
+SECURITY.md @siddjoshi
+.github/workflows/*.yml @siddjoshi
+.github/dependabot.yml @siddjoshi
+.env.example @siddjoshi
+.gitignore @siddjoshi
+
+# Any changes to authentication or API configuration
+**/auth*.* @siddjoshi
+**/config*.* @siddjoshi
+**/*credentials*.* @siddjoshi
+**/*secret*.* @siddjoshi
+**/*token*.* @siddjoshi
