@@ -31,7 +31,6 @@ jobs:
 
     - name: Run npm audit
       run: npm audit --audit-level=moderate
-      continue-on-error: false
 
     - name: Run npm audit fix
       run: npm audit fix --dry-run
@@ -63,7 +62,6 @@ jobs:
 
     - name: Run pip-audit
       run: pip-audit --desc
-      continue-on-error: false
 
   trivy-scan:
     name: Trivy Security Scan
