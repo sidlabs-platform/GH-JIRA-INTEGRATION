@@ -231,7 +231,9 @@ Add the following secrets to your GitHub repository:
 | `JIRA_BASE_URL` | Your Jira Cloud URL | `https://your-domain.atlassian.net` |
 | `JIRA_USER_EMAIL` | Email for Jira authentication | `user@example.com` |
 | `JIRA_API_TOKEN` | Jira API token | `ATATT3xFfGF0...` |
-| `JIRA_DEFAULT_PROJECT` | Default project key | `SEC` |
+| `JIRA_DEFAULT_PROJECT` | Default project key* | `SEC` |
+
+*Note: `JIRA_DEFAULT_PROJECT` is not sensitive data and can alternatively be stored as a repository variable instead of a secret.
 
 #### Creating a Jira API Token
 

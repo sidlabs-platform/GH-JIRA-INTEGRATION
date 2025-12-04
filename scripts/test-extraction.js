@@ -81,6 +81,12 @@ test(
   ['TEST-999']
 );
 
+test(
+  'Extract multi-hyphen key',
+  extractJiraKeys('Working on SUB-PROJ-123'),
+  ['SUB-PROJ-123']
+);
+
 console.log('\n' + '='.repeat(60));
 console.log('Testing User Story Finder');
 console.log('='.repeat(60));

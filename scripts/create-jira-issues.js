@@ -52,20 +52,21 @@ const config = {
 /**
  * Regex patterns for extracting Jira issue keys
  * Supports multiple formats:
- * - Direct issue keys: PROJ-123
+ * - Direct issue keys: PROJ-123, SUB-PROJ-123
  * - User Story: PROJ-123
  * - JIRA: PROJ-123
  * - Story: PROJ-123
  */
 const JIRA_KEY_PATTERNS = [
-  // Direct Jira key pattern (e.g., PROJ-123, ABC-456)
-  /\b([A-Z][A-Z0-9]+-\d+)\b/g,
+  // Direct Jira key pattern (e.g., PROJ-123, SUB-PROJ-123, ABC-456)
+  // Supports keys with multiple hyphens before the final number
+  /\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\b/g,
   
   // Explicit markers with issue key
-  /(?:User Story|JIRA|Story|Issue):\s*([A-Z][A-Z0-9]+-\d+)/gi,
+  /(?:User Story|JIRA|Story|Issue):\s*([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)/gi,
   
   // Square bracket format [PROJ-123]
-  /\[([A-Z][A-Z0-9]+-\d+)\]/g,
+  /\[([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-\d+)\]/g,
 ];
 
 /**
@@ -83,7 +84,8 @@ function extractJiraKeys(text) {
     for (const match of matches) {
       // The Jira key is always in the first capture group (match[1])
       const key = match[1];
-      if (key && /^[A-Z][A-Z0-9]+-\d+$/.test(key)) {
+      // Validate the key format (supports multi-hyphen keys like SUB-PROJ-123)
+      if (key && /^[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-\d+$/.test(key)) {
         keys.add(key);
       }
     }
@@ -427,11 +429,20 @@ async function createJiraIssue(jiraClient, alert, userStory) {
   labels.push(`repo-${repo}`);
   labels.push('code-scanning');
   
+  // Extract project key from user story or use default
+  // Supports both simple (PROJ-123) and complex (SUB-PROJ-123) keys
+  let projectKey = config.jira.defaultProject;
+  if (userStory) {
+    // Match everything before the last hyphen-number combination
+    const projectMatch = userStory.match(/^([A-Z][A-Z0-9-]+?)-\d+$/);
+    projectKey = projectMatch ? projectMatch[1] : userStory.split('-')[0];
+  }
+  
   // Build issue payload
   const issuePayload = {
     fields: {
       project: {
-        key: userStory ? userStory.split('-')[0] : config.jira.defaultProject
+        key: projectKey
       },
       summary: `[Security Alert] ${alert.rule.description || alert.rule.id} in ${filePath}`,
       description: description,
@@ -439,15 +450,9 @@ async function createJiraIssue(jiraClient, alert, userStory) {
         name: config.jira.defaultIssueType
       },
       labels: labels,
+      priority: { name: priority },
     }
   };
-  
-  // Set priority if the field is available
-  try {
-    issuePayload.fields.priority = { name: priority };
-  } catch (error) {
-    console.log('Priority field may not be available, continuing without it');
-  }
   
   if (config.dryRun) {
     console.log('DRY RUN - Would create Jira issue:');
