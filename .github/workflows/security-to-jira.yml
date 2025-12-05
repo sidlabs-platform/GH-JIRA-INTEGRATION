@@ -1,0 +1,61 @@
+name: GitHub Security to Jira Integration
+
+# Triggers when GitHub Advanced Security creates a security alert
+on:
+  code_scanning_alert:
+    types: [created, reopened]
+  secret_scanning_alert:
+    types: [created, reopened]
+  dependabot_alert:
+    types: [created, reopened]
+
+permissions:
+  # Minimum required permissions following least-privilege principle
+  contents: read           # Read repository contents and commits
+  security-events: read    # Read security alerts from GitHub Advanced Security
+
+jobs:
+  create-jira-issues:
+    name: Create Jira Issues for Security Alerts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to access commit messages
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: ./scripts
+        run: npm ci
+
+      - name: Create Jira Issues for Security Alerts
+        env:
+          # GitHub context
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_ALERT_URL: ${{ github.event.alert.html_url }}
+          GITHUB_ALERT_NUMBER: ${{ github.event.alert.number }}
+
+          # Jira credentials (stored in GitHub Secrets)
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+          # Jira configuration
+          JIRA_DEFAULT_PROJECT: ${{ secrets.JIRA_DEFAULT_PROJECT }}
+          JIRA_DEFAULT_ISSUE_TYPE: >-
+            ${{ vars.JIRA_DEFAULT_ISSUE_TYPE || 'Task' }}
+          JIRA_FALLBACK_LABEL: >-
+            ${{ vars.JIRA_FALLBACK_LABEL || 'missing-user-story' }}
+          JIRA_SECURITY_LABEL: >-
+            ${{ vars.JIRA_SECURITY_LABEL || 'github-security-alert' }}
+
+        run: node ./scripts/create-jira-issues.js
+        working-directory: .
