@@ -1,14 +1,16 @@
 name: GitHub Security to Jira Integration
 
-# Triggers on pull request events to check for security alerts
-# Note: This workflow only processes alerts in the context of PRs
+# Triggers when GitHub Advanced Security creates a security alert
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  code_scanning_alert:
+    types: [created, reopened]
+  secret_scanning_alert:
+    types: [created, reopened]
+  dependabot_alert:
+    types: [created, reopened]
 
 permissions:
   # Minimum required permissions following least-privilege principle
-  pull-requests: read      # Read PR details and description
   contents: read           # Read repository contents and commits
   security-events: read    # Read security alerts from GitHub Advanced Security
 
@@ -32,16 +34,14 @@ jobs:
         working-directory: ./scripts
         run: npm ci
 
-      - name: Create Jira Issues for Code Scanning Alerts
+      - name: Create Jira Issues for Security Alerts
         env:
           # GitHub context
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_PR_DESCRIPTION: ${{ github.event.pull_request.body }}
-          GITHUB_PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_ALERT_URL: ${{ github.event.alert.html_url }}
+          GITHUB_ALERT_NUMBER: ${{ github.event.alert.number }}
 
           # Jira credentials (stored in GitHub Secrets)
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
