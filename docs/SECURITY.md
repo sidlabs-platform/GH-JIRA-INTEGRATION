@@ -22,6 +22,8 @@ All sensitive credentials are stored in GitHub Secrets, which:
 | `JIRA_USER_EMAIL` | Jira user account | Use dedicated service account |
 | `JIRA_BASE_URL` | Jira instance URL | Can be a variable instead |
 | `JIRA_DEFAULT_PROJECT` | Default project key | Can be a variable instead |
+| `SLACK_WEBHOOK_URL` | Slack notifications | Treat as secret; rotate if compromised |
+| `TEAMS_WEBHOOK_URL` | Teams notifications | Treat as secret; rotate if compromised |
 
 ### Best Practices
 
@@ -45,17 +47,19 @@ All sensitive credentials are stored in GitHub Secrets, which:
 
 ### Workflow Permissions
 
-The workflow uses **least-privilege permissions**:
+The workflow uses **least-privilege permissions** with targeted write access:
 
 ```yaml
 permissions:
-  pull-requests: read      # Read PR details only
+  pull-requests: write     # Write PR comments (summary notifications)
   contents: read           # Read repository contents only
   security-events: read    # Read security alerts only
+  issues: write            # Write issue comments
 ```
 
 **Why this matters:**
-- No write permissions means the workflow cannot modify code
+- Write permissions are limited to PR/issue comments only
+- No code modification permissions
 - No token elevation means attackers can't escalate privileges
 - Minimal surface area reduces attack vectors
 
@@ -137,8 +141,23 @@ The integration transmits:
 - ✅ Security alert metadata (severity, rule, file paths)
 - ✅ PR information (number, URL, description)
 - ✅ Repository information (name, commit SHA)
+- ✅ Dedup hashes (SHA-256 of alert metadata, no raw content)
 - ❌ **NO source code content**
 - ❌ **NO actual secrets found by scanning**
+
+### Notification Security
+
+Slack and Teams webhook URLs:
+- Must be stored as **GitHub Secrets** (never variables)
+- Are only used for outbound HTTPS POST requests
+- Do not receive or process inbound data
+- Should be rotated if compromised
+- Monitor for unauthorized message patterns
+
+PR comments:
+- Only contain alert summaries (severity, rule name, Jira key)
+- Do not include vulnerability details or code snippets
+- Visible to anyone with PR read access
 
 ---
 

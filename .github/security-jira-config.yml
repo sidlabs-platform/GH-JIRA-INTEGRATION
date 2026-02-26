@@ -1,0 +1,51 @@
+# =============================================================================
+# GitHub Security → Jira Integration Configuration
+# =============================================================================
+# This file provides centralized configuration for the security-to-jira
+# integration. Environment variables take precedence over values in this file.
+# Place this file at .github/security-jira-config.yml in your repository.
+
+# Alert type configuration
+alerts:
+  code_scanning:
+    enabled: true
+    severity_threshold: low       # Options: critical, high, medium, low
+  secret_scanning:
+    enabled: true
+    severity_threshold: low       # Secrets are always treated as critical
+  dependabot:
+    enabled: true
+    severity_threshold: medium    # Ignore low-severity dependency alerts
+
+# Jira configuration
+jira:
+  default_project: SEC
+  default_issue_type: Task
+  link_type: Relates              # Jira issue link type name
+  security_label: github-security-alert
+  fallback_label: missing-user-story
+
+# Notification configuration
+notifications:
+  pr_comment:
+    enabled: true
+    on_missing_epic: true         # Post comment when no EPIC/User Story found
+    on_issue_created: true        # Post summary of created Jira issues
+  slack:
+    enabled: false
+    webhook_url: ""               # Set via SLACK_WEBHOOK_URL secret instead
+  teams:
+    enabled: false
+    webhook_url: ""               # Set via TEAMS_WEBHOOK_URL secret instead
+
+# Duplicate detection
+deduplication:
+  enabled: true
+
+# EPIC resolution settings
+epic_resolution:
+  validate_issue_type: true       # Check if linked issue is an EPIC/Story
+  traverse_hierarchy: true        # Walk up parent chain to find EPIC
+  accepted_types:
+    - Epic
+    - Story

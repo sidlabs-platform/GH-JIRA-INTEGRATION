@@ -73,6 +73,82 @@ GET /repos/{owner}/{repo}/code-scanning/alerts
 
 ---
 
+### Secret Scanning API
+
+#### List Secret Scanning Alerts
+
+```
+GET /repos/{owner}/{repo}/secret-scanning/alerts
+```
+
+**Parameters:**
+- `state` (string): Filter by alert state (`open`, `resolved`)
+- `per_page` (integer): Results per page (default: 30, max: 100)
+
+**Response:**
+```json
+[
+  {
+    "number": 42,
+    "created_at": "2023-06-15T10:00:00Z",
+    "html_url": "https://github.com/owner/repo/security/secret-scanning/42",
+    "state": "open",
+    "secret_type": "aws_access_key_id",
+    "secret_type_display_name": "AWS Access Key ID",
+    "secret": "AKIA...",
+    "resolution": null
+  }
+]
+```
+
+**Documentation:** https://docs.github.com/en/rest/secret-scanning
+
+---
+
+### Dependabot Alerts API
+
+#### List Dependabot Alerts
+
+```
+GET /repos/{owner}/{repo}/dependabot/alerts
+```
+
+**Parameters:**
+- `state` (string): Filter by alert state (`auto_dismissed`, `dismissed`, `fixed`, `open`)
+- `severity` (string): Filter by severity (`low`, `medium`, `high`, `critical`)
+- `per_page` (integer): Results per page (default: 30, max: 100)
+
+**Response:**
+```json
+[
+  {
+    "number": 7,
+    "state": "open",
+    "html_url": "https://github.com/owner/repo/security/dependabot/7",
+    "dependency": {
+      "package": {
+        "ecosystem": "npm",
+        "name": "lodash"
+      },
+      "manifest_path": "package-lock.json"
+    },
+    "security_advisory": {
+      "ghsa_id": "GHSA-xxxx-yyyy-zzzz",
+      "summary": "Prototype Pollution in lodash",
+      "severity": "high"
+    },
+    "security_vulnerability": {
+      "severity": "high",
+      "vulnerable_version_range": "< 4.17.21"
+    }
+  }
+]
+```
+
+**Documentation:** https://docs.github.com/en/rest/dependabot/alerts
+
+---
+
 ### Pull Requests API
 
 #### Get Pull Request
@@ -257,6 +333,68 @@ POST /rest/api/3/issueLink
 ```
 
 **Documentation:** https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-links/#api-rest-api-3-issuelink-post
+
+---
+
+### Remote Link API
+
+#### Create Remote Link
+
+```
+POST /rest/api/3/issue/{issueIdOrKey}/remotelink
+```
+
+**Request Body:**
+```json
+{
+  "globalId": "github-alert=owner/repo/code-scanning/123",
+  "object": {
+    "url": "https://github.com/owner/repo/security/code-scanning/123",
+    "title": "GitHub Security Alert #123",
+    "icon": {
+      "url16x16": "https://github.githubassets.com/favicons/favicon.svg",
+      "title": "GitHub"
+    }
+  }
+}
+```
+
+**Documentation:** https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-remote-links/
+
+---
+
+### Search API (JQL)
+
+#### Search Issues
+
+```
+GET /rest/api/3/search?jql={jql}&maxResults=1
+```
+
+**Used for:** Duplicate prevention — checking if an issue with a specific dedup label already exists.
+
+**Example JQL:**
+```
+project = SEC AND labels = "dedup-abc123def456"
+```
+
+**Response:**
+```json
+{
+  "total": 1,
+  "issues": [
+    {
+      "key": "SEC-100",
+      "fields": {
+        "summary": "[Security Alert] SQL Injection",
+        "labels": ["github-security-alert", "dedup-abc123def456"]
+      }
+    }
+  ]
+}
+```
+
+**Documentation:** https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/
 
 ---
 
@@ -449,8 +587,96 @@ Creates a link between two Jira issues.
 **Example:**
 ```javascript
 await linkJiraIssues(jiraClient, 'SEC-456', 'PROJ-123');
-// Creates "Relates" link between issues
+// Creates "Relates" link between issues (configurable via JIRA_LINK_TYPE)
 ```
+
+---
+
+#### normalizeAlertInput(eventName, envVars)
+
+Determines the alert type and repository context from the GitHub event.
+
+**Parameters:**
+- `eventName` (string): GitHub event name (e.g., `code_scanning_alert`, `pull_request`)
+- `envVars` (Object): Environment variables object
+
+**Returns:**
+- `Object`: `{ alertType, owner, repo, prNumber }`
+
+**Example:**
+```javascript
+const ctx = normalizeAlertInput('code_scanning_alert', process.env);
+// Returns: { alertType: 'code_scanning', owner: 'acme', repo: 'app', prNumber: '42' }
+```
+
+---
+
+#### meetsSeverityThreshold(alertSeverity, threshold)
+
+Checks if an alert severity meets or exceeds the configured threshold.
+
+**Parameters:**
+- `alertSeverity` (string): Alert severity level
+- `threshold` (string): Minimum severity threshold
+
+**Returns:**
+- `boolean`: True if alert meets threshold
+
+**Severity order:** `critical > high > medium > low > note > warning`
+
+**Example:**
+```javascript
+meetsSeverityThreshold('high', 'medium');  // true
+meetsSeverityThreshold('low', 'high');     // false
+meetsSeverityThreshold('critical', 'low'); // true
+```
+
+---
+
+#### checkForDuplicate(jiraClient, dedupKey, projectKey)
+
+Searches Jira for an existing issue with the same dedup label.
+
+**Parameters:**
+- `jiraClient` (axios): Configured Jira API client
+- `dedupKey` (string): SHA-256 hash used as dedup key
+- `projectKey` (string): Jira project key to search in
+
+**Returns:**
+- `Promise<string|null>`: Existing issue key if duplicate found, null otherwise
+
+**Example:**
+```javascript
+const existing = await checkForDuplicate(jiraClient, 'abc123', 'SEC');
+// Returns: 'SEC-100' or null
+```
+
+---
+
+#### resolveEpic(jiraClient, issueKey)
+
+Traverses the Jira issue hierarchy upward to find the EPIC parent.
+
+**Parameters:**
+- `jiraClient` (axios): Configured Jira API client
+- `issueKey` (string): Starting issue key
+
+**Returns:**
+- `Promise<string|null>`: EPIC issue key if found, null otherwise
+
+---
+
+#### generateDedupKey(alert, alertType, repo)
+
+Generates a SHA-256 hash for duplicate detection.
+
+**Parameters:**
+- `alert` (Object): Alert object
+- `alertType` (string): Alert type (`code_scanning`, `secret_scanning`, `dependabot`)
+- `repo` (string): Repository name
+
+**Returns:**
+- `string`: SHA-256 hex digest
 
 ---
 
@@ -479,6 +705,22 @@ await linkJiraIssues(jiraClient, 'SEC-456', 'PROJ-123');
 | `JIRA_DEFAULT_ISSUE_TYPE` | Variable | `Task` | Issue type for alerts |
 | `JIRA_FALLBACK_LABEL` | Variable | `missing-user-story` | Label for no user story |
 | `JIRA_SECURITY_LABEL` | Variable | `github-security-alert` | Label for all security issues |
+| `JIRA_MIN_SEVERITY` | Variable | `low` | Minimum severity threshold |
+| `JIRA_LINK_TYPE` | Variable | `Relates` | Jira issue link type |
+| `JIRA_ENABLE_REMOTE_LINKS` | Variable | `true` | Enable Jira Remote Links |
+| `SLACK_WEBHOOK_URL` | Secret | — | Slack webhook for notifications |
+| `TEAMS_WEBHOOK_URL` | Secret | — | Teams webhook for notifications |
+| `ENABLE_PR_COMMENTS` | Variable | `false` | Post summary as PR comment |
+| `ALERT_CODE_SCANNING_ENABLED` | Variable | `true` | Enable Code Scanning |
+| `ALERT_SECRET_SCANNING_ENABLED` | Variable | `true` | Enable Secret Scanning |
+| `ALERT_DEPENDABOT_ENABLED` | Variable | `true` | Enable Dependabot |
+| `ALERT_CODE_SCANNING_SEVERITY` | Variable | `medium` | Code Scanning severity threshold |
+| `ALERT_SECRET_SCANNING_SEVERITY` | Variable | `low` | Secret Scanning severity threshold |
+| `ALERT_DEPENDABOT_SEVERITY` | Variable | `high` | Dependabot severity threshold |
+| `DEDUP_ENABLED` | Variable | `true` | Enable duplicate prevention |
+| `EPIC_VALIDATE_TYPE` | Variable | `true` | Validate user story issue type |
+| `EPIC_TRAVERSE_HIERARCHY` | Variable | `true` | Traverse to EPIC parent |
+| `EPIC_ACCEPTED_TYPES` | Variable | `Story,Task,Bug` | Accepted issue types |
 
 ---
 
@@ -656,7 +898,8 @@ DRY RUN - Would create Jira issue:
 {
   "@octokit/rest": "^20.0.2",
   "axios": "^1.6.2",
-  "axios-retry": "^4.0.0"
+  "axios-retry": "^4.0.0",
+  "crypto-js": "^4.2.0"
 }
 ```
 

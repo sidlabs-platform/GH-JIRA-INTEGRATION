@@ -5,7 +5,7 @@
  * Run with: node test-extraction.js
  */
 
-const { extractJiraKeys, findUserStory } = require('./create-jira-issues.js');
+const { extractJiraKeys, findUserStory, normalizeAlertInput, meetsSeverityThreshold, checkForDuplicate } = require('./create-jira-issues.js');
 
 // Test counter
 let passed = 0;
@@ -123,6 +123,120 @@ test(
     { commit: { message: 'fix: bug fix [AUTH-101]' } }
   ]),
   'AUTH-100'
+);
+
+console.log('\n' + '='.repeat(60));
+console.log('Testing False Positive Exclusion');
+console.log('='.repeat(60));
+
+test(
+  'Exclude HTTP-200 false positive',
+  extractJiraKeys('Response was HTTP-200'),
+  []
+);
+
+test(
+  'Exclude UTF-8 false positive',
+  extractJiraKeys('Encoding is UTF-8'),
+  []
+);
+
+test(
+  'Exclude SSL-3 false positive',
+  extractJiraKeys('Protocol SSL-3 is deprecated'),
+  []
+);
+
+test(
+  'Do not exclude valid key similar to exclusion',
+  extractJiraKeys('Working on HTTPS-123'),
+  ['HTTPS-123']
+);
+
+console.log('\n' + '='.repeat(60));
+console.log('Testing Alert Normalization');
+console.log('='.repeat(60));
+
+test(
+  'Normalize code scanning alert',
+  (() => {
+    const result = normalizeAlertInput('code_scanning_alert', {
+      number: 42,
+      html_url: 'https://github.com/test/repo/security/code-scanning/42',
+      rule: { id: 'js/sql-injection', severity: 'error', security_severity_level: 'high', description: 'SQL Injection' },
+      most_recent_instance: { location: { path: 'src/db.js' }, commit_sha: 'abc123' },
+    });
+    return result._type === 'code_scanning' && result.rule.security_severity_level === 'high' && result.number === 42;
+  })(),
+  true
+);
+
+test(
+  'Normalize secret scanning alert',
+  (() => {
+    const result = normalizeAlertInput('secret_scanning_alert', {
+      number: 7,
+      html_url: 'https://github.com/test/repo/security/secret-scanning/7',
+      secret_type: 'github_token',
+      secret_type_display_name: 'GitHub Token',
+    });
+    return result._type === 'secret_scanning' && result.rule.security_severity_level === 'critical' && result.number === 7;
+  })(),
+  true
+);
+
+test(
+  'Normalize dependabot alert',
+  (() => {
+    const result = normalizeAlertInput('dependabot_alert', {
+      number: 15,
+      html_url: 'https://github.com/test/repo/security/dependabot/15',
+      security_advisory: { severity: 'high', summary: 'XSS vulnerability', cve_id: 'CVE-2024-1234' },
+      dependency: { package: { name: 'lodash' }, manifest_path: 'package.json' },
+    });
+    return result._type === 'dependabot' && result.rule.security_severity_level === 'high' && result._packageName === 'lodash';
+  })(),
+  true
+);
+
+test(
+  'Return null for unsupported event type',
+  normalizeAlertInput('unknown_event', {}),
+  null
+);
+
+console.log('\n' + '='.repeat(60));
+console.log('Testing Severity Threshold Filter');
+console.log('='.repeat(60));
+
+test(
+  'Critical meets medium threshold',
+  meetsSeverityThreshold('critical', 'medium'),
+  true
+);
+
+test(
+  'Low does not meet high threshold',
+  meetsSeverityThreshold('low', 'high'),
+  false
+);
+
+test(
+  'Medium meets medium threshold',
+  meetsSeverityThreshold('medium', 'medium'),
+  true
+);
+
+test(
+  'High meets low threshold',
+  meetsSeverityThreshold('high', 'low'),
+  true
+);
+
+test(
+  'Null severity defaults to 0',
+  meetsSeverityThreshold(null, 'low'),
+  false
 );
 
 console.log('\n' + '='.repeat(60));

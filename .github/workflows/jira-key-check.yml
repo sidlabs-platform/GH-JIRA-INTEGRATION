@@ -1,0 +1,58 @@
+name: Jira Key Validation
+
+# Enforces that PR descriptions contain a valid Jira issue key
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  validate-jira-key:
+    name: Validate Jira Key in PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check PR description for Jira key
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prBody = context.payload.pull_request.body || '';
+            const prTitle = context.payload.pull_request.title || '';
+            const combined = `${prTitle}\n${prBody}`;
+
+            // Match Jira issue keys (e.g., PROJ-123, SUB-PROJ-456)
+            const jiraKeyPattern = /\b[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-\d+\b/g;
+            // Exclude common false positives
+            const exclusionPattern = /^(HTTP|ERROR|ISO|UTF|TCP|UDP|SSL|TLS|API|SDK|CLI|URL|URI)-\d+$/;
+
+            const matches = combined.match(jiraKeyPattern) || [];
+            const validKeys = matches.filter(key => !exclusionPattern.test(key));
+
+            if (validKeys.length === 0) {
+              const message = [
+                '## ⚠️ Missing Jira Key',
+                '',
+                'This PR description does not contain a valid Jira issue key.',
+                '',
+                '**Please add a Jira reference** in one of these formats:',
+                '- `User Story: PROJ-123`',
+                '- `JIRA: PROJ-123`',
+                '- `[PROJ-123]`',
+                '- Or include the key directly: `PROJ-123`',
+                '',
+                'This ensures security alerts are properly linked to your work items.',
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: message,
+              });
+
+              core.setFailed('No Jira key found in PR description or title.');
+            } else {
+              core.info(`Found Jira key(s): ${validKeys.join(', ')}`);
+            }

@@ -31,6 +31,9 @@ cp -r GH-JIRA-INTEGRATION/scripts .
 
 **Files copied:**
 - `.github/workflows/security-to-jira.yml` - GitHub Actions workflow
+- `.github/security-jira-config.yml` - Centralized configuration (optional)
+- `.github/workflows/jira-key-check.yml` - PR governance (optional)
+- `.github/workflows/commit-lint.yml` - Commit governance (optional)
 - `scripts/create-jira-issues.js` - Integration script
 - `scripts/package.json` - Node.js dependencies
 - `scripts/package-lock.json` - Locked dependencies
@@ -71,6 +74,20 @@ cp -r GH-JIRA-INTEGRATION/scripts .
    | `JIRA_DEFAULT_PROJECT` | Project key | `SEC` |
 
 3. **Click "Add secret" for each one**
+
+### Optional: Additional Configuration
+
+For advanced features, add these as **repository variables** (not secrets):
+
+| Name | Default | Purpose |
+|------|---------|---------|
+| `JIRA_MIN_SEVERITY` | `low` | Minimum severity to create issues |
+| `ENABLE_PR_COMMENTS` | `false` | Post summary comment on PRs |
+| `DEDUP_ENABLED` | `true` | Skip duplicate alerts |
+| `SLACK_WEBHOOK_URL` | — | Slack notifications (add as secret) |
+| `TEAMS_WEBHOOK_URL` | — | Teams notifications (add as secret) |
+
+For full configuration, edit `.github/security-jira-config.yml`.
 
 ---
 
@@ -193,10 +210,13 @@ When you create a PR:
 
 1. **Developer creates PR** with user story reference
 2. **Code Scanning runs** automatically
-3. **Security alerts detected** (if any)
-4. **Workflow triggers** automatically
-5. **Jira issues created** and linked to user story
-6. **Team is notified** via Jira
+3. **Security alerts detected** (if any) — Code Scanning, Secret Scanning, and Dependabot
+4. **Severity filtering** skips alerts below the configured threshold
+5. **Duplicate check** prevents creating issues that already exist in Jira
+6. **Workflow triggers** automatically
+7. **Jira issues created** and linked to user story (with remote links)
+8. **EPIC resolved** (if hierarchy traversal is enabled)
+9. **Notifications sent** via PR comment, Slack, and/or Teams
 
 ---
 

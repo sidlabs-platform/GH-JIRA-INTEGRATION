@@ -1,0 +1,83 @@
+name: Commit Message Validation
+
+# Enforces consistent commit message format with Jira key reference
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate-commits:
+    name: Validate Commit Messages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit messages
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: commits } = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+
+            // Conventional commit pattern: type(scope): description
+            // Optionally with Jira key: type(scope): PROJ-123 description
+            const conventionalPattern = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?!?:\s.+/i;
+            const jiraKeyPattern = /\b[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)*-\d+\b/;
+            const exclusionPattern = /^(HTTP|ERROR|ISO|UTF|TCP|UDP|SSL|TLS|API|SDK|CLI|URL|URI)-\d+$/;
+
+            const issues = [];
+
+            for (const commit of commits) {
+              const msg = commit.commit.message.split('\n')[0]; // First line only
+              const sha = commit.sha.substring(0, 7);
+
+              // Check conventional commit format (warning only)
+              if (!conventionalPattern.test(msg)) {
+                issues.push(`⚠️ \`${sha}\`: Not in conventional commit format: "${msg}"`);
+              }
+
+              // Check for Jira key (informational)
+              const jiraMatch = msg.match(jiraKeyPattern);
+              if (jiraMatch && !exclusionPattern.test(jiraMatch[0])) {
+                core.info(`${sha}: Found Jira key ${jiraMatch[0]}`);
+              }
+            }
+
+            if (issues.length > 0) {
+              const message = [
+                '## 📝 Commit Message Review',
+                '',
+                'Some commits do not follow the [Conventional Commits](https://www.conventionalcommits.org/) format:',
+                '',
+                ...issues,
+                '',
+                '**Recommended format:** `type(scope): PROJ-123 description`',
+                '',
+                'Examples:',
+                '- `feat(auth): AUTH-123 add OAuth support`',
+                '- `fix(api): SEC-456 patch SQL injection`',
+                '',
+                '_This is a non-blocking check._',
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: message,
+              });
+
+              // Non-blocking - just warn
+              core.warning(`${issues.length} commit(s) do not follow conventional format`);
+            }

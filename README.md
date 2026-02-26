@@ -220,29 +220,51 @@ This integration automatically creates **Jira issues** when **GitHub Advanced Se
            │ Triggers on:
            │ - pull_request
            │ - code_scanning_alert
+           │ - secret_scanning_alert
+           │ - dependabot_alert
            │
            ▼
 ┌──────────────────────────────────────┐
 │   create-jira-issues.js              │
 │                                      │
 │  ┌────────────────────────────────┐  │
-│  │  GitHub API (@octokit/rest)    │  │
-│  │  - Fetch PR details            │  │
-│  │  - Fetch commits               │  │
-│  │  - Fetch security alerts       │  │
+│  │  Config Loader                 │  │
+│  │  - .github/security-jira-     │  │
+│  │    config.yml (centralized)    │  │
+│  │  - Env vars (override)        │  │
 │  └────────────────────────────────┘  │
 │                                      │
 │  ┌────────────────────────────────┐  │
-│  │  User Story Extraction         │  │
-│  │  - Regex pattern matching      │  │
-│  │  - Precedence rules            │  │
+│  │  GitHub API (@octokit/rest)    │  │
+│  │  - Fetch PR details            │  │
+│  │  - Fetch commits               │  │
+│  │  - Code Scanning alerts        │  │
+│  │  - Secret Scanning alerts      │  │
+│  │  - Dependabot alerts           │  │
+│  │  - Post PR comments            │  │
+│  └────────────────────────────────┘  │
+│                                      │
+│  ┌────────────────────────────────┐  │
+│  │  Alert Normalization           │  │
+│  │  - Unified alert structure     │  │
+│  │  - Severity threshold filter   │  │
+│  │  - Dedup key generation        │  │
 │  └────────────────────────────────┘  │
 │                                      │
 │  ┌────────────────────────────────┐  │
 │  │  Jira API (axios + retry)      │  │
 │  │  - Create issues               │  │
 │  │  - Link issues                 │  │
-│  │  - Verify user stories         │  │
+│  │  - Remote links (bi-dir)       │  │
+│  │  - JQL duplicate search        │  │
+│  │  - EPIC hierarchy resolution   │  │
+│  └────────────────────────────────┘  │
+│                                      │
+│  ┌────────────────────────────────┐  │
+│  │  Notifications                 │  │
+│  │  - PR comments                 │  │
+│  │  - Slack webhooks              │  │
+│  │  - Teams webhooks              │  │
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
            │
@@ -262,8 +284,22 @@ This integration automatically creates **Jira issues** when **GitHub Advanced Se
 | Alert Type | Status | Notes |
 |------------|--------|-------|
 | **Code Scanning** | ✅ Implemented | CodeQL and third-party tools |
-| **Secret Scanning** | 🔄 Future | Easy to extend |
-| **Dependabot** | 🔄 Future | Easy to extend |
+| **Secret Scanning** | ✅ Implemented | Detects exposed credentials |
+| **Dependabot** | ✅ Implemented | Vulnerable dependency alerts |
+
+### Enterprise Features
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Duplicate Prevention** | ✅ | SHA-256 dedup via Jira labels + JQL |
+| **Severity Filtering** | ✅ | Per-alert-type severity thresholds |
+| **EPIC Resolution** | ✅ | Traverses parent hierarchy up to 5 levels |
+| **Bi-Directional Traceability** | ✅ | Jira Remote Links + PR comments |
+| **Slack Notifications** | ✅ | Webhook-based notifications |
+| **Teams Notifications** | ✅ | Adaptive Card webhook notifications |
+| **Centralized Config** | ✅ | `.github/security-jira-config.yml` |
+| **Governance Workflows** | ✅ | Jira key enforcement, commit linting |
+| **Structured Logging** | ✅ | JSON-formatted log output |
 
 ### User Story Detection
 
@@ -288,6 +324,10 @@ Supported formats:
 - ✅ Priority mapping from severity
 - ✅ Retry logic with exponential backoff
 - ✅ Proper error handling
+- ✅ Remote Links back to GitHub alerts (bi-directional traceability)
+- ✅ Duplicate detection via SHA-256 dedup labels
+- ✅ EPIC resolution with parent hierarchy traversal
+- ✅ Configurable issue link types
 
 ---
 
@@ -322,8 +362,11 @@ Copy the following files to your repository:
 ```
 your-repo/
 ├── .github/
+│   ├── security-jira-config.yml        # Centralized config (optional)
 │   └── workflows/
-│       └── security-to-jira.yml
+│       ├── security-to-jira.yml        # Main integration workflow
+│       ├── jira-key-check.yml          # Governance: PR Jira key enforcement
+│       └── commit-lint.yml             # Governance: commit message linting
 └── scripts/
     ├── package.json
     └── create-jira-issues.js
@@ -370,6 +413,47 @@ Add the following secrets to your GitHub repository:
 | `JIRA_DEFAULT_ISSUE_TYPE` | Issue type for security alerts | `Task` |
 | `JIRA_FALLBACK_LABEL` | Label when no user story found | `missing-user-story` |
 | `JIRA_SECURITY_LABEL` | Label for all security issues | `github-security-alert` |
+| `JIRA_LINK_TYPE` | Jira issue link type name | `Relates` |
+
+**Settings → Secrets and variables → Actions → Secrets**
+
+| Secret Name | Description | Required |
+|-------------|-------------|----------|
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL | No |
+| `TEAMS_WEBHOOK_URL` | Microsoft Teams webhook URL | No |
+
+### Step 5: Centralized Config File (Optional)
+
+Create `.github/security-jira-config.yml` for org-level configuration:
+
+```yaml
+severity:
+  minSeverity: medium     # Ignore low/note severity alerts
+
+jira:
+  defaultProject: SEC
+  defaultIssueType: Task
+  linkType: Relates
+  labels:
+    - github-security-alert
+
+notifications:
+  pr_comments: true
+  slack: false
+  teams: false
+
+governance:
+  requireJiraKey: true
+  commitPattern: '^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?:\s'
+
+advanced:
+  enableRemoteLinks: true
+  dedupEnabled: true
+  epicTraversal: true
+  maxEpicDepth: 5
+```
+
+Environment variables override config file values when both are set.
 
 ---
 
@@ -385,20 +469,25 @@ on:
     types: [opened, synchronize, reopened]
   code_scanning_alert:
     types: [created, reopened]
+  secret_scanning_alert:
+    types: [created, reopened]
+  dependabot_alert:
+    types: [created]
 ```
 
 ### Permissions (Least-Privilege)
 
 ```yaml
 permissions:
-  pull-requests: read      # Read PR details
+  pull-requests: write     # Read PR details + post comments
   contents: read           # Read commits
   security-events: read    # Read security alerts
+  issues: write            # Post PR comments
 ```
 
 ### Environment Variables
 
-All configuration is done via environment variables and secrets:
+All configuration is done via environment variables, secrets, and an optional config file:
 
 ```yaml
 env:
@@ -406,6 +495,7 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   GITHUB_REPOSITORY: ${{ github.repository }}
   GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+  GITHUB_EVENT_NAME: ${{ github.event_name }}
   
   # Jira credentials (from secrets)
   JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
@@ -414,6 +504,27 @@ env:
   
   # Jira configuration
   JIRA_DEFAULT_PROJECT: ${{ secrets.JIRA_DEFAULT_PROJECT }}
+  JIRA_LINK_TYPE: ${{ vars.JIRA_LINK_TYPE || 'Relates' }}
+
+  # Alert-type specific controls
+  ALERT_CODE_SCANNING_ENABLED: 'true'
+  ALERT_CODE_SCANNING_SEVERITY: 'low'
+  ALERT_SECRET_SCANNING_ENABLED: 'true'
+  ALERT_SECRET_SCANNING_SEVERITY: 'low'
+  ALERT_DEPENDABOT_ENABLED: 'true'
+  ALERT_DEPENDABOT_SEVERITY: 'low'
+
+  # Notifications (optional)
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+  NOTIFY_PR_COMMENT: 'true'
+  NOTIFY_SLACK_ENABLED: 'false'
+  NOTIFY_TEAMS_ENABLED: 'false'
+
+  # Deduplication & EPIC resolution
+  DEDUP_ENABLED: 'true'
+  EPIC_VALIDATE_TYPE: 'true'
+  EPIC_TRAVERSE_HIERARCHY: 'true'
 ```
 
 ---
@@ -593,8 +704,9 @@ Automatically applied labels:
 - `github-security-alert` - All security issues
 - `severity-{level}` - Severity level (critical, high, medium, low)
 - `repo-{name}` - Repository name
-- `code-scanning` - Alert type
+- `code-scanning` / `secret-scanning` / `dependabot` - Alert type
 - `missing-user-story` - If no user story found (fallback)
+- `dedup-{sha256-hash}` - Duplicate detection key (auto-generated)
 
 ### Severity to Priority Mapping
 
@@ -628,10 +740,11 @@ Automatically applied labels:
 
 ### GitHub Actions Security
 
-- **Minimal permissions** in workflow
+- **Minimal permissions** in workflow (write only for PR comments)
 - **Pin action versions** for reproducibility
 - **Audit workflow runs** regularly
 - **Restrict who can modify workflows**
+- **Governance workflows** enforce Jira key and commit conventions
 
 ### Jira API Security
 
@@ -807,7 +920,15 @@ Fixed typo in error message.
 
 ### Q: How do I extend this to Secret Scanning?
 
-**A:** Add a `secret_scanning_alert` event trigger to the workflow and update the script to handle secret scanning alerts using the GitHub API.
+**A:** Secret Scanning is now fully supported out of the box. Add a `secret_scanning_alert` trigger to the workflow and the script will automatically fetch and process secret scanning alerts.
+
+### Q: How do I enable Dependabot alert integration?
+
+**A:** Dependabot is now fully supported. Add a `dependabot_alert` trigger to the workflow. You can control severity thresholds per alert type via `ALERT_DEPENDABOT_SEVERITY`.
+
+### Q: How does duplicate prevention work?
+
+**A:** Each alert is hashed (SHA-256) using its unique properties (rule ID, file path, package name, etc.). The hash is stored as a Jira label (`dedup-{hash}`). Before creating an issue, the script searches Jira via JQL for existing issues with the same dedup label.
 
 ### Q: Can I group multiple alerts into one Jira issue?
 
@@ -868,10 +989,13 @@ The script exports the following functions for testing:
 
 ```javascript
 const {
-  extractJiraKeys,    // Extract Jira keys from text
-  findUserStory,      // Find user story from PR and commits
-  createJiraIssue,    // Create a Jira issue
-  main,               // Main execution function
+  extractJiraKeys,         // Extract Jira keys from text
+  findUserStory,           // Find user story from PR and commits
+  normalizeAlertInput,     // Normalize code/secret/dependabot alerts
+  meetsSeverityThreshold,  // Check if alert meets severity filter
+  checkForDuplicate,       // JQL-based duplicate detection
+  createJiraIssue,         // Create a Jira issue
+  main,                    // Main execution function
 } = require('./create-jira-issues.js');
 ```
 
@@ -882,28 +1006,35 @@ const {
 ### Performance
 
 - **Parallel processing:** Not implemented (sequential for safety)
-- **Rate limiting:** Handled via retry logic
+- **Rate limiting:** Handled via retry logic with axios-retry
 - **Large PRs:** Filters alerts to only affected files
 - **Alert volume:** Creates one issue per alert
+- **Severity filtering:** Reduces noise by skipping alerts below configurable threshold
+- **Duplicate prevention:** Avoids creating redundant Jira issues via SHA-256 dedup keys
 
 ### Recommendations for Scale
 
-1. **Alert filtering:** Consider grouping alerts by severity or file
+1. **Severity thresholds:** Use `JIRA_MIN_SEVERITY` to filter low-priority alerts (already implemented)
 2. **Batching:** Implement batch Jira issue creation for high volume
 3. **Caching:** Cache Jira project lookups
-4. **Webhooks:** Consider using Jira webhooks for bidirectional sync
+4. **Config file:** Use `.github/security-jira-config.yml` for per-repo tuning (already implemented)
+5. **Alert type toggling:** Disable unneeded alert types to reduce API calls (already implemented)
 
 ---
 
 ## 🔄 Future Enhancements
 
-- [ ] Support for Secret Scanning alerts
-- [ ] Support for Dependabot alerts
+- [x] Support for Secret Scanning alerts
+- [x] Support for Dependabot alerts
+- [x] Slack/Teams notifications
+- [x] Custom field mapping configuration file
+- [x] Duplicate prevention
+- [x] EPIC hierarchy validation
+- [x] Bi-directional traceability (remote links)
+- [x] Governance workflows (Jira key checks, commit linting)
 - [ ] Automatic issue closure when alerts are resolved
 - [ ] Configurable issue grouping strategies
 - [ ] Support for Jira Service Management
-- [ ] Slack/Teams notifications
-- [ ] Custom field mapping configuration file
 
 ---
 

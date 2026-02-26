@@ -134,6 +134,39 @@ JIRA_FALLBACK_LABEL=no-user-story
 
 # Label applied to all security issues (default: github-security-alert)
 JIRA_SECURITY_LABEL=security-alert
+
+# Minimum severity to create Jira issues (default: low)
+JIRA_MIN_SEVERITY=medium
+
+# Enable PR summary comments (default: false)
+ENABLE_PR_COMMENTS=true
+
+# Enable duplicate prevention (default: true)
+DEDUP_ENABLED=true
+```
+
+### Centralized Config File
+
+Create `.github/security-jira-config.yml` for org-level defaults:
+
+```yaml
+severity:
+  minimum: medium
+
+jira:
+  defaultProject: SEC
+  issueType: Bug
+  linkType: Relates
+  enableRemoteLinks: true
+
+notifications:
+  prComment: true
+  slack: true
+  teams: false
+
+governance:
+  requireJiraKey: true
+  commitLint: true
 ```
 
 ---
@@ -210,6 +243,49 @@ Implements complete authentication flow.
 - 1 Jira issue created
 - Linked to `AUTH-100` (first found in commits)
 - Labels: `github-security-alert`, `severity-high`, `repo-myapp`, `code-scanning`
+
+---
+
+### Scenario 4: Secret Scanning Alert
+
+**Secret scanning detects:**
+- AWS access key committed in `config/aws.js`
+
+**Result:**
+- 1 Jira issue created with summary: `[Secret Scanning] AWS Access Key ID in config/aws.js`
+- Labels: `github-security-alert`, `severity-critical`, `secret-scanning`, `repo-myapp`
+- Remote link back to GitHub secret scanning alert
+- Slack/Teams notification sent (if configured)
+
+---
+
+### Scenario 5: Dependabot Alert with Dedup
+
+**Dependabot detects:**
+- Prototype Pollution in lodash < 4.17.21 (High severity)
+
+**First run result:**
+- 1 Jira issue created: `[Dependabot] Prototype Pollution in lodash`
+- Labels include `dedup-{sha256hash}`, `dependabot`
+
+**Second run (same alert):**
+- Duplicate detected via JQL search for `dedup-{sha256hash}` label
+- Skipped — no new Jira issue created
+- Log: `Duplicate found: SEC-100, skipping`
+
+---
+
+### Scenario 6: Severity Filtering
+
+**Configuration:** `JIRA_MIN_SEVERITY=high`
+
+**Code scanning finds:**
+- SQL injection (Critical) → ✅ Issue created
+- XSS (High) → ✅ Issue created
+- Missing CSRF token (Medium) → ❌ Filtered out
+- Info disclosure (Low) → ❌ Filtered out
+
+**Result:** 2 of 4 alerts create Jira issues
 
 ---
 
@@ -425,7 +501,54 @@ labels = "repo-myapp" AND labels = "github-security-alert"
 
 // Unresolved critical alerts
 labels = "severity-critical" AND labels = "github-security-alert" AND status != Done
+
+// Duplicate detection check
+project = SEC AND labels = "dedup-abc123def456"
+
+// Secret scanning alerts
+labels = "secret-scanning" AND labels = "github-security-alert"
+
+// Dependabot alerts
+labels = "dependabot" AND labels = "github-security-alert"
 ```
+
+---
+
+## 🔔 Notification Examples
+
+### PR Comment Output
+
+When `ENABLE_PR_COMMENTS=true`, a summary comment is posted on the PR:
+
+```markdown
+## 🛡️ Security Alert Summary
+
+**3** Jira issues created from security alerts.
+
+| Alert | Severity | Jira Issue |
+|-------|----------|------------|
+| SQL Injection in user.js | High | [SEC-101](https://example.atlassian.net/browse/SEC-101) |
+| XSS in profile.js | Medium | [SEC-102](https://example.atlassian.net/browse/SEC-102) |
+| AWS Key in config.js | Critical | [SEC-103](https://example.atlassian.net/browse/SEC-103) |
+
+**1** duplicate alert(s) skipped.
+```
+
+### Slack Notification Payload
+
+```json
+{
+  "text": "🛡️ Security Alert Summary: 3 Jira issues created from owner/repo PR #42",
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*3 issues created* | *1 duplicate skipped* | *0 errors*"
+      }
+    }
+  ]
+}
 
 ---
 

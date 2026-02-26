@@ -10,9 +10,11 @@ on:
     types: [created, reopened]
 
 permissions:
-  # Minimum required permissions following least-privilege principle
+  # Required permissions
   contents: read           # Read repository contents and commits
   security-events: read    # Read security alerts from GitHub Advanced Security
+  pull-requests: write     # Post PR comments and add labels for traceability
+  issues: write            # Create PR comments via Issues API
 
 jobs:
   create-jira-issues:
@@ -56,6 +58,17 @@ jobs:
             ${{ vars.JIRA_FALLBACK_LABEL || 'missing-user-story' }}
           JIRA_SECURITY_LABEL: >-
             ${{ vars.JIRA_SECURITY_LABEL || 'github-security-alert' }}
+
+          # Link type for Jira issue linking
+          JIRA_LINK_TYPE: >-
+            ${{ vars.JIRA_LINK_TYPE || 'Relates' }}
+
+          # GitHub event context
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+
+          # Notification configuration (optional)
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
 
         run: node ./scripts/create-jira-issues.js
         working-directory: .
