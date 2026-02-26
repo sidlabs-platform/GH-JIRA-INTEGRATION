@@ -176,6 +176,93 @@ function meetsSeverityThreshold(alertSeverity, threshold) {
 }
 
 // ============================================================================
+// Input Validation & Sanitization
+// ============================================================================
+
+const MAX_STRING_LENGTH = 1000;
+const MAX_SUMMARY_LENGTH = 255;
+const MAX_LABEL_LENGTH = 255;
+const MAX_PAYLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const VALID_SEVERITIES = new Set(Object.keys(SEVERITY_ORDER));
+
+/**
+ * Sanitize a string value from alert payload.
+ * Converts to string, trims, removes control characters, and enforces max length.
+ */
+function sanitizeString(value, maxLength = MAX_STRING_LENGTH) {
+  if (value == null) return '';
+  const str = String(value);
+  // Remove control characters (except newline/tab for descriptions) and trim
+  return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, maxLength);
+}
+
+/**
+ * Validate and sanitize a URL string.
+ * Returns the URL if valid (http/https), otherwise returns a fallback.
+ */
+function sanitizeUrl(value, fallback = '') {
+  if (!value) return fallback;
+  const str = sanitizeString(value, 2048);
+  try {
+    const parsed = new URL(str);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.href;
+    }
+  } catch {
+    // invalid URL
+  }
+  return fallback;
+}
+
+/**
+ * Validate and sanitize a numeric value (e.g. alert number, line number).
+ * Returns the number if it's a finite positive integer, otherwise returns the fallback.
+ */
+function sanitizeNumber(value, fallback = null) {
+  if (value == null) return fallback;
+  const num = Number(value);
+  if (Number.isFinite(num) && num >= 0 && Number.isSafeInteger(num)) return num;
+  return fallback;
+}
+
+/**
+ * Sanitize a severity value against the known set.
+ */
+function sanitizeSeverity(value, fallback = 'medium') {
+  if (!value) return fallback;
+  const lower = String(value).toLowerCase().trim();
+  return VALID_SEVERITIES.has(lower) ? lower : fallback;
+}
+
+/**
+ * Sanitize a Jira label value.
+ * Labels must not contain spaces and should only contain safe characters.
+ */
+function sanitizeLabel(value) {
+  if (!value) return '';
+  return String(value)
+    .replace(/[^a-zA-Z0-9_.\-]/g, '-')
+    .slice(0, MAX_LABEL_LENGTH);
+}
+
+/**
+ * Escape a value for safe inclusion in a JQL string.
+ * Escapes backslashes, double quotes, and single quotes.
+ */
+function escapeJql(value) {
+  if (!value) return '';
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Validate that a string looks like a valid Jira issue key (e.g. PROJ-123).
+ */
+const JIRA_KEY_PATTERN = /^[A-Z][A-Z0-9]+-\d+$/;
+function isValidJiraKey(key) {
+  return typeof key === 'string' && JIRA_KEY_PATTERN.test(key);
+}
+
+// ============================================================================
 // User Story Extraction Logic
 // ============================================================================
 
@@ -382,54 +469,81 @@ function getAlertFromEvent() {
 }
 
 function normalizeAlertInput(eventName, rawAlert) {
+  if (!rawAlert || typeof rawAlert !== 'object') {
+    log('warn', 'Invalid alert payload: expected an object');
+    return null;
+  }
+
+  const alertNumber = sanitizeNumber(rawAlert.number);
+  if (alertNumber == null) {
+    log('warn', 'Invalid alert payload: missing or invalid alert number');
+    return null;
+  }
+
+  const alertUrl = sanitizeUrl(rawAlert.html_url);
+
   switch (eventName) {
-    case 'code_scanning_alert':
+    case 'code_scanning_alert': {
+      const location = rawAlert.most_recent_instance?.location;
       return {
         _type: 'code_scanning',
-        number: rawAlert.number,
-        html_url: rawAlert.html_url,
+        number: alertNumber,
+        html_url: alertUrl,
         rule: {
-          id: rawAlert.rule?.id || '',
-          severity: rawAlert.rule?.severity || 'medium',
-          security_severity_level: rawAlert.rule?.security_severity_level || rawAlert.rule?.severity || 'medium',
-          description: rawAlert.rule?.description || 'Code Scanning Alert',
-          full_description: rawAlert.rule?.full_description || rawAlert.rule?.description || '',
+          id: sanitizeString(rawAlert.rule?.id, 255) || '',
+          severity: sanitizeSeverity(rawAlert.rule?.severity),
+          security_severity_level: sanitizeSeverity(rawAlert.rule?.security_severity_level || rawAlert.rule?.severity),
+          description: sanitizeString(rawAlert.rule?.description) || 'Code Scanning Alert',
+          full_description: sanitizeString(rawAlert.rule?.full_description || rawAlert.rule?.description || '', 5000),
         },
-        most_recent_instance: rawAlert.most_recent_instance || { location: {} },
+        most_recent_instance: {
+          location: {
+            path: sanitizeString(location?.path, 500) || '',
+            start_line: sanitizeNumber(location?.start_line),
+            end_line: sanitizeNumber(location?.end_line),
+          },
+          commit_sha: sanitizeString(rawAlert.most_recent_instance?.commit_sha, 40),
+        },
       };
-    case 'secret_scanning_alert':
+    }
+    case 'secret_scanning_alert': {
+      const secretType = sanitizeString(rawAlert.secret_type, 255) || 'secret';
+      const secretDisplayName = sanitizeString(rawAlert.secret_type_display_name, 255);
       return {
         _type: 'secret_scanning',
-        number: rawAlert.number,
-        html_url: rawAlert.html_url,
+        number: alertNumber,
+        html_url: alertUrl,
         rule: {
-          id: rawAlert.secret_type || 'secret',
+          id: secretType,
           severity: 'critical',
           security_severity_level: 'critical',
-          description: `Secret Detected: ${rawAlert.secret_type_display_name || rawAlert.secret_type || 'Unknown'}`,
-          full_description: `A ${rawAlert.secret_type_display_name || rawAlert.secret_type} secret was detected in the repository.`,
+          description: `Secret Detected: ${secretDisplayName || secretType || 'Unknown'}`,
+          full_description: `A ${secretDisplayName || secretType} secret was detected in the repository.`,
         },
         most_recent_instance: { location: { path: 'N/A' } },
       };
-    case 'dependabot_alert':
+    }
+    case 'dependabot_alert': {
+      const advisory = rawAlert.security_advisory;
       return {
         _type: 'dependabot',
-        number: rawAlert.number,
-        html_url: rawAlert.html_url,
+        number: alertNumber,
+        html_url: alertUrl,
         rule: {
-          id: rawAlert.security_advisory?.cve_id || rawAlert.security_advisory?.ghsa_id || `dependabot-${rawAlert.number}`,
-          severity: rawAlert.security_advisory?.severity || 'medium',
-          security_severity_level: rawAlert.security_advisory?.severity || 'medium',
-          description: rawAlert.security_advisory?.summary || 'Dependabot Alert',
-          full_description: rawAlert.security_advisory?.description || '',
+          id: sanitizeString(advisory?.cve_id, 255) || sanitizeString(advisory?.ghsa_id, 255) || `dependabot-${alertNumber}`,
+          severity: sanitizeSeverity(advisory?.severity),
+          security_severity_level: sanitizeSeverity(advisory?.severity),
+          description: sanitizeString(advisory?.summary) || 'Dependabot Alert',
+          full_description: sanitizeString(advisory?.description || '', 5000),
         },
         most_recent_instance: {
-          location: { path: rawAlert.dependency?.manifest_path || 'N/A' },
+          location: { path: sanitizeString(rawAlert.dependency?.manifest_path, 500) || 'N/A' },
           commit_sha: '',
         },
-        _packageName: rawAlert.dependency?.package?.name,
-        _vulnerableRange: rawAlert.vulnerable_version_range,
+        _packageName: sanitizeString(rawAlert.dependency?.package?.name, 255),
+        _vulnerableRange: sanitizeString(rawAlert.vulnerable_version_range, 255),
       };
+    }
     default:
       return null;
   }
@@ -496,6 +610,10 @@ function createJiraClient() {
  * @returns {boolean} True if issue exists
  */
 async function verifyJiraIssue(jiraClient, issueKey) {
+  if (!isValidJiraKey(issueKey)) {
+    console.log(`Invalid Jira issue key format: ${issueKey}`);
+    return false;
+  }
   try {
     await jiraClient.get(`/rest/api/3/issue/${issueKey}`);
     console.log(`Verified Jira issue exists: ${issueKey}`);
@@ -607,8 +725,8 @@ async function createJiraIssue(jiraClient, alert, userStory) {
           { type: 'text', text: 'Pull Request: ', marks: [{ type: 'strong' }] },
           {
             type: 'text',
-            text: config.github.prUrl,
-            marks: [{ type: 'link', attrs: { href: config.github.prUrl } }]
+            text: sanitizeUrl(config.github.prUrl, 'N/A'),
+            marks: [{ type: 'link', attrs: { href: sanitizeUrl(config.github.prUrl, '#') } }]
           }
         ]
       },
@@ -621,21 +739,21 @@ async function createJiraIssue(jiraClient, alert, userStory) {
         type: 'paragraph',
         content: [
           { type: 'text', text: 'Repository: ', marks: [{ type: 'strong' }] },
-          { type: 'text', text: config.github.repository }
+          { type: 'text', text: sanitizeString(config.github.repository) }
         ]
       },
       {
         type: 'paragraph',
         content: [
           { type: 'text', text: 'Commit SHA: ', marks: [{ type: 'strong' }] },
-          { type: 'text', text: config.github.headSha }
+          { type: 'text', text: sanitizeString(config.github.headSha, 40) }
         ]
       },
       {
         type: 'paragraph',
         content: [
           { type: 'text', text: 'PR Number: ', marks: [{ type: 'strong' }] },
-          { type: 'text', text: `#${config.github.prNumber}` }
+          { type: 'text', text: `#${sanitizeNumber(config.github.prNumber, 'N/A')}` }
         ]
       }
     ]
@@ -643,13 +761,13 @@ async function createJiraIssue(jiraClient, alert, userStory) {
   
   // Build labels array with deduplication identifier
   const alertType = alert._type || 'code_scanning';
-  const labels = [config.jira.securityLabel, `severity-${alert.rule.security_severity_level || alert.rule.severity}`];
+  const labels = [sanitizeLabel(config.jira.securityLabel), sanitizeLabel(`severity-${alert.rule.security_severity_level || alert.rule.severity}`)];
   if (!userStory) {
-    labels.push(config.jira.fallbackLabel);
+    labels.push(sanitizeLabel(config.jira.fallbackLabel));
   }
-  labels.push(`repo-${repo}`);
-  labels.push(alertType.replace(/_/g, '-'));
-  labels.push(`gh-alert-${repo}-${alertType}-${alert.number}`);
+  labels.push(sanitizeLabel(`repo-${repo}`));
+  labels.push(sanitizeLabel(alertType.replace(/_/g, '-')));
+  labels.push(sanitizeLabel(`gh-alert-${repo}-${alertType}-${alert.number}`));
   
   // Extract project key from user story or use default
   // Supports both simple (PROJ-123) and complex (SUB-PROJ-123) keys
@@ -664,12 +782,12 @@ async function createJiraIssue(jiraClient, alert, userStory) {
   const issuePayload = {
     fields: {
       project: {
-        key: projectKey
+        key: sanitizeString(projectKey, 50)
       },
-      summary: `[Security Alert] ${alert.rule.description || alert.rule.id} in ${filePath}`,
+      summary: sanitizeString(`[Security Alert] ${alert.rule.description || alert.rule.id} in ${filePath}`, MAX_SUMMARY_LENGTH),
       description: description,
       issuetype: {
-        name: config.jira.defaultIssueType
+        name: sanitizeString(config.jira.defaultIssueType, 50)
       },
       labels: labels,
       priority: { name: priority },
@@ -714,6 +832,10 @@ async function linkJiraIssues(jiraClient, securityIssueKey, userStoryKey) {
     console.log(`DRY RUN - Would link ${securityIssueKey} to ${userStoryKey}`);
     return;
   }
+  if (!isValidJiraKey(securityIssueKey) || !isValidJiraKey(userStoryKey)) {
+    console.log(`Invalid Jira issue key format: ${securityIssueKey} or ${userStoryKey}`);
+    return;
+  }
   
   try {
     // Verify the user story exists before linking
@@ -725,7 +847,7 @@ async function linkJiraIssues(jiraClient, securityIssueKey, userStoryKey) {
     
     const linkPayload = {
       type: {
-        name: config.jira.linkType
+        name: sanitizeString(config.jira.linkType, 50)
       },
       inwardIssue: {
         key: securityIssueKey
@@ -750,6 +872,10 @@ async function linkJiraIssues(jiraClient, securityIssueKey, userStoryKey) {
 
 async function resolveEpic(jiraClient, issueKey) {
   if (!config.epicResolution.validateType) return issueKey;
+  if (!isValidJiraKey(issueKey)) {
+    log('warn', `Invalid Jira issue key format for epic resolution: ${issueKey}`);
+    return issueKey;
+  }
   try {
     const { data: issue } = await jiraClient.get(`/rest/api/3/issue/${issueKey}`, {
       params: { fields: 'issuetype,parent' },
@@ -777,7 +903,7 @@ async function checkForDuplicate(jiraClient, alert) {
   const alertType = alert._type || 'code_scanning';
   const dedupLabel = `gh-alert-${repo}-${alertType}-${alert.number}`;
   try {
-    const jql = `labels = "${dedupLabel}" AND labels = "${config.jira.securityLabel}"`;
+    const jql = `labels = "${escapeJql(dedupLabel)}" AND labels = "${escapeJql(config.jira.securityLabel)}"`;
     const response = await jiraClient.get('/rest/api/3/search', {
       params: { jql, maxResults: 1, fields: 'key' },
     });
@@ -793,14 +919,21 @@ async function checkForDuplicate(jiraClient, alert) {
 
 async function createRemoteLink(jiraClient, issueKey, url, title) {
   if (config.dryRun || !url) return;
+  if (!isValidJiraKey(issueKey)) {
+    log('warn', `Invalid Jira issue key format for remote link: ${issueKey}`);
+    return;
+  }
+  const safeUrl = sanitizeUrl(url);
+  const safeTitle = sanitizeString(title);
+  if (!safeUrl) return;
   try {
     await jiraClient.post(`/rest/api/3/issue/${issueKey}/remotelink`, {
-      globalId: url,
+      globalId: safeUrl,
       application: { type: 'com.github', name: 'GitHub Security' },
       relationship: 'discovered by',
       object: {
-        url,
-        title,
+        url: safeUrl,
+        title: safeTitle,
         icon: { url16x16: 'https://github.githubassets.com/favicons/favicon.svg' },
       },
     });
