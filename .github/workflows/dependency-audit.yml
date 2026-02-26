@@ -1,0 +1,90 @@
+name: "Dependency Audit"
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  pull_request:
+    branches: [ "main", "master", "develop" ]
+  schedule:
+    # Run every day at 2:00 UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  npm-audit:
+    name: NPM Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: hashFiles('package.json') != ''
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run npm audit
+      run: npm audit --audit-level=moderate
+
+    - name: Run npm audit fix
+      run: npm audit fix --dry-run
+      continue-on-error: true
+
+  pip-audit:
+    name: Python Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: hashFiles('requirements.txt') != '' || hashFiles('setup.py') != '' || hashFiles('pyproject.toml') != ''
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: Install pip-audit
+      run: pip install pip-audit
+
+    - name: Install dependencies
+      run: |
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        if [ -f setup.py ]; then pip install -e .; fi
+
+    - name: Run pip-audit
+      run: pip-audit --desc
+
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner in repo mode
+      uses: aquasecurity/trivy-action@0.28.0
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
