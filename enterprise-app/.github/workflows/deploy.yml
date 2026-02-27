@@ -1,0 +1,105 @@
+name: Deploy Enterprise Security-to-Jira App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'enterprise-app/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'enterprise-app/**'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: enterprise-app
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: enterprise-app/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy infrastructure
+        uses: azure/arm-deploy@v2
+        with:
+          resourceGroupName: rg-security-jira-staging
+          template: enterprise-app/infra/main.bicep
+          parameters: environmentName=staging
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Build and push container image
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/security-jira-app:staging-${{ github.sha }} .
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/security-jira-app:staging-${{ github.sha }}
+
+  deploy-production:
+    name: Deploy to Production
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy infrastructure
+        uses: azure/arm-deploy@v2
+        with:
+          resourceGroupName: rg-security-jira-prod
+          template: enterprise-app/infra/main.bicep
+          parameters: environmentName=prod
+
+      - name: Build and push container image
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/security-jira-app:prod-${{ github.sha }} .
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/security-jira-app:prod-${{ github.sha }}

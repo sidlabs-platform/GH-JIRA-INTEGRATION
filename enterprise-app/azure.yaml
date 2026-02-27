@@ -1,0 +1,9 @@
+name: security-jira-app
+metadata:
+  template: gh-jira-enterprise-app
+services:
+  app:
+    project: ./enterprise-app
+    host: containerapp
+    language: ts
+    module: ./infra/main.bicep
